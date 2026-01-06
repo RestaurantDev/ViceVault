@@ -11,8 +11,9 @@ import {
   Tooltip,
   ResponsiveContainer,
   ReferenceLine,
+  ReferenceArea,
 } from "recharts";
-import { TrendingUp, TrendingDown, Loader2, Table as TableIcon } from "lucide-react";
+import { TrendingUp, TrendingDown, Loader2, Table as TableIcon, Clock } from "lucide-react";
 import { cn, formatCurrency, formatChartDate } from "@/lib/utils";
 import { COLORS } from "@/lib/constants";
 import { useSelectedAsset, useCleanDays, useViceConfig } from "@/store/vice-store";
@@ -37,8 +38,38 @@ export function GhostPortfolioChart({ onSummaryChange }: GhostPortfolioChartProp
   // Fetch market data (with fallback support)
   const { data: marketData, isLoading: isLoadingMarket, error: marketError, isUsingFallback } = useMarketData(selectedAsset);
   
-  // Calculate portfolio
-  const { portfolio, summary, isCalculating, error: calcError } = useDCACalculation(
+  // Calculate tracking period
+  const trackingInfo = useMemo(() => {
+    if (!startDate) return { months: 0, label: "Not started" };
+    
+    const start = new Date(startDate);
+    const now = new Date();
+    const diffMonths = (now.getFullYear() - start.getFullYear()) * 12 + (now.getMonth() - start.getMonth());
+    
+    if (diffMonths < 1) {
+      const diffDays = Math.floor((now.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+      return { months: 0, days: diffDays, label: `${diffDays} days` };
+    } else if (diffMonths < 12) {
+      return { months: diffMonths, label: `${diffMonths} month${diffMonths > 1 ? "s" : ""}` };
+    } else {
+      const years = Math.floor(diffMonths / 12);
+      const remainingMonths = diffMonths % 12;
+      return { 
+        months: diffMonths, 
+        label: `${years} yr${years > 1 ? "s" : ""}${remainingMonths > 0 ? ` ${remainingMonths} mo` : ""}` 
+      };
+    }
+  }, [startDate]);
+  
+  // Calculate portfolio (with simulation mode for new users)
+  const { 
+    portfolio, 
+    summary, 
+    isCalculating, 
+    error: calcError,
+    isSimulation,
+    simulationStartDate 
+  } = useDCACalculation(
     marketData,
     startDate,
     frequency,
@@ -132,33 +163,73 @@ export function GhostPortfolioChart({ onSummaryChange }: GhostPortfolioChartProp
         </div>
       </div>
       
+      {/* Simulation Mode Banner */}
+      {isSimulation && summary && !isLoading && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-gradient-to-r from-alpha/10 to-alpha/5 border border-alpha/20 rounded-lg p-4 mb-6"
+        >
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 bg-alpha/20 rounded-full flex items-center justify-center flex-shrink-0">
+              <TrendingUp className="w-5 h-5 text-alpha" strokeWidth={1.5} />
+            </div>
+            <div>
+              <h3 className="font-semibold text-structure">
+                What if you had started 1 year ago?
+              </h3>
+              <p className="text-sm text-structure/60 mt-1">
+                This simulation shows what your portfolio could have been worth if you had invested your{" "}
+                <span className="font-medium text-alpha">${viceAmount}/week</span> into{" "}
+                <span className="font-medium text-alpha">{selectedAsset}</span> since{" "}
+                {simulationStartDate ? new Date(simulationStartDate).toLocaleDateString("en-US", { month: "short", year: "numeric" }) : "last year"}.
+              </p>
+              <p className="text-xs text-structure/40 mt-2">
+                Log 5+ clean days to see your actual portfolio growth.
+              </p>
+            </div>
+          </div>
+        </motion.div>
+      )}
+      
       {/* Summary Stats */}
       {summary && !isLoading && (
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6"
+          className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6"
         >
           <SummaryCard
-            label="Cash Invested"
+            label={isSimulation ? "Simulated Period" : "Time Tracking"}
+            value={isSimulation ? "1 year" : trackingInfo.label}
+            subValue={
+              isSimulation 
+                ? "What-if scenario" 
+                : (startDate ? `Since ${new Date(startDate).toLocaleDateString("en-US", { month: "short", year: "numeric" })}` : undefined)
+            }
+            trend="neutral"
+            icon={<Clock className="w-4 h-4 text-alpha" strokeWidth={1.5} />}
+          />
+          <SummaryCard
+            label={isSimulation ? "Would Invest" : "Cash Invested"}
             value={formatCurrency(summary.totalCashSpent, 0)}
             trend="neutral"
           />
           <SummaryCard
-            label="Current Value"
+            label={isSimulation ? "Would Be Worth" : "Current Value"}
             value={formatCurrency(summary.currentValue, 0)}
             trend={summary.gainLoss >= 0 ? "up" : "down"}
           />
           <SummaryCard
-            label="Total Gain/Loss"
+            label={isSimulation ? "Potential Gain" : "Total Gain/Loss"}
             value={`${summary.gainLoss >= 0 ? "+" : ""}${formatCurrency(summary.gainLoss, 0)}`}
             subValue={`${summary.gainLossPercent >= 0 ? "+" : ""}${summary.gainLossPercent.toFixed(1)}%`}
             trend={summary.gainLoss >= 0 ? "up" : "down"}
           />
           <SummaryCard
-            label="Clean Days"
-            value={summary.cleanDaysCount.toString()}
-            subValue={`${summary.purchasesCount} purchases`}
+            label={isSimulation ? "Weekly Investments" : "Clean Days"}
+            value={isSimulation ? summary.purchasesCount.toString() : summary.cleanDaysCount.toString()}
+            subValue={isSimulation ? "52 weeks simulated" : `${summary.purchasesCount} purchases`}
             trend="neutral"
           />
         </motion.div>
@@ -250,6 +321,22 @@ export function GhostPortfolioChart({ onSummaryChange }: GhostPortfolioChartProp
                 name="Portfolio Value"
               />
               
+              {/* Tracking Period Reference Line - Start Date */}
+              {startDate && chartData.length > 0 && (
+                <ReferenceLine
+                  x={formatChartDate(startDate)}
+                  stroke={COLORS.alpha}
+                  strokeWidth={2}
+                  strokeDasharray="8 4"
+                  label={{
+                    value: "Started",
+                    position: "top",
+                    fill: COLORS.alpha,
+                    fontSize: 11,
+                  }}
+                />
+              )}
+              
               {/* Focused Point Indicator */}
               {focusedIndex !== null && chartData[focusedIndex] && (
                 <ReferenceLine
@@ -296,15 +383,19 @@ interface SummaryCardProps {
   value: string;
   subValue?: string;
   trend: "up" | "down" | "neutral";
+  icon?: React.ReactNode;
 }
 
-function SummaryCard({ label, value, subValue, trend }: SummaryCardProps) {
+function SummaryCard({ label, value, subValue, trend, icon }: SummaryCardProps) {
   return (
     <div className="bg-canvas/50 rounded-lg p-4">
-      <p className="text-xs text-structure/50 uppercase tracking-wider mb-1">
-        {label}
-      </p>
-      <div className="flex items-baseline gap-2">
+      <div className="flex items-center gap-1.5">
+        {icon}
+        <p className="text-xs text-structure/50 uppercase tracking-wider">
+          {label}
+        </p>
+      </div>
+      <div className="flex items-baseline gap-2 mt-1">
         <span className={cn(
           "text-2xl font-bold tabular-nums",
           trend === "up" && "text-alpha",
@@ -313,7 +404,7 @@ function SummaryCard({ label, value, subValue, trend }: SummaryCardProps) {
         )}>
           {value}
         </span>
-        {trend !== "neutral" && (
+        {trend !== "neutral" && !icon && (
           trend === "up" 
             ? <TrendingUp className="w-4 h-4 text-alpha" strokeWidth={1.5} />
             : <TrendingDown className="w-4 h-4 text-risk" strokeWidth={1.5} />

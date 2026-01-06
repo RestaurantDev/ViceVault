@@ -203,12 +203,16 @@ export const useViceStore = create<ViceStore>()(
        */
       logCleanDay: () => {
         const today = getTodayISO();
-        const { cleanDays } = get();
+        const { cleanDays, startDate } = get();
         
         if (cleanDays.includes(today)) return;
         
+        // Set startDate if not already set (first clean day)
+        const newStartDate = startDate || today;
+        
         set({
           cleanDays: [...cleanDays, today].sort(),
+          startDate: newStartDate,
         });
       },
 
@@ -355,17 +359,67 @@ export const useViceStore = create<ViceStore>()(
 );
 
 /**
+ * Helper to compute vice aggregates
+ */
+function computeViceConfig(state: ViceState) {
+  const activeVices = state.vices.filter((v) => v.isActive);
+  const totalAmount = activeVices.reduce((sum, v) => sum + v.amount, 0);
+  const primaryVice = activeVices[0];
+  
+  // Find earliest vice creation date for start date
+  const earliestViceDate = activeVices.length > 0
+    ? activeVices.reduce((earliest, v) => 
+        v.createdAt < earliest ? v.createdAt : earliest, 
+        activeVices[0].createdAt
+      )
+    : null;
+  
+  // Use stored startDate, or earliest vice date, or empty string
+  const effectiveStartDate = state.startDate || earliestViceDate || "";
+  
+  return {
+    viceName: primaryVice?.name || state.viceName || "My Vice",
+    viceAmount: totalAmount > 0 ? totalAmount : state.viceAmount,
+    frequency: primaryVice?.frequency || state.frequency,
+    startDate: effectiveStartDate,
+    totalViceAmount: totalAmount,
+    activeVicesCount: activeVices.length,
+  };
+}
+
+/**
  * Selector hooks for optimized re-renders
  */
-export const useViceConfig = () =>
-  useViceStore(
-    useShallow((state) => ({
-      viceName: state.viceName,
-      viceAmount: state.viceAmount,
-      frequency: state.frequency,
-      startDate: state.startDate,
-    }))
-  );
+export const useViceConfig = () => {
+  const vices = useViceStore((state) => state.vices);
+  const viceName = useViceStore((state) => state.viceName);
+  const viceAmount = useViceStore((state) => state.viceAmount);
+  const frequency = useViceStore((state) => state.frequency);
+  const startDate = useViceStore((state) => state.startDate);
+  
+  // Compute derived values
+  const activeVices = vices.filter((v) => v.isActive);
+  const totalAmount = activeVices.reduce((sum, v) => sum + v.amount, 0);
+  const primaryVice = activeVices[0];
+  
+  // Find earliest vice creation date
+  const earliestViceDate = activeVices.length > 0
+    ? activeVices.reduce((earliest, v) => 
+        v.createdAt < earliest ? v.createdAt : earliest, 
+        activeVices[0].createdAt
+      )
+    : null;
+  
+  return {
+    viceName: primaryVice?.name || viceName || "My Vice",
+    viceAmount: totalAmount > 0 ? totalAmount : viceAmount,
+    frequency: primaryVice?.frequency || frequency,
+    startDate: startDate || earliestViceDate || "",
+    vices,
+    activeVices,
+    totalViceAmount: totalAmount,
+  };
+};
 
 export const useVices = () =>
   useViceStore((state) => state.vices);

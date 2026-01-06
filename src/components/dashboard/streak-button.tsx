@@ -15,10 +15,16 @@ interface StreakButtonProps {
 export function StreakButton({ latestPrice = 500 }: StreakButtonProps) {
   const isHydrated = useStoreHydration();
   const cleanDays = useCleanDays();
-  const { viceAmount, viceName } = useViceConfig();
+  const { viceAmount, viceName, activeVices, totalViceAmount } = useViceConfig();
   const selectedAsset = useSelectedAsset();
   const logCleanDay = useViceStore((s) => s.logCleanDay);
   const removeCleanDay = useViceStore((s) => s.removeCleanDay);
+  
+  // Use total from active vices if available
+  const effectiveAmount = totalViceAmount > 0 ? totalViceAmount : viceAmount;
+  const effectiveName = activeVices?.length > 1 
+    ? `${activeVices.length} vices` 
+    : viceName || "Not set";
   
   const { success, tap } = useHaptics();
   
@@ -41,9 +47,9 @@ export function StreakButton({ latestPrice = 500 }: StreakButtonProps) {
     logCleanDay();
     success();
     
-    // Calculate shares bought
-    const sharesBought = viceAmount / latestPrice;
-    const dollarValue = viceAmount;
+    // Calculate shares bought using effective amount
+    const sharesBought = effectiveAmount / latestPrice;
+    const dollarValue = effectiveAmount;
     
     setToastMessage({ shares: sharesBought, value: dollarValue });
     setShowToast(true);
@@ -136,11 +142,11 @@ export function StreakButton({ latestPrice = 500 }: StreakButtonProps) {
       <div className="mt-6 pt-6 border-t border-structure/10">
         <div className="flex items-center justify-between text-sm">
           <span className="text-structure/50">Vice being tracked:</span>
-          <span className="font-medium text-structure">{viceName || "Not set"}</span>
+          <span className="font-medium text-structure">{effectiveName}</span>
         </div>
         <div className="flex items-center justify-between text-sm mt-2">
           <span className="text-structure/50">Amount per occurrence:</span>
-          <span className="font-medium text-structure">{formatCurrency(viceAmount, 0)}</span>
+          <span className="font-medium text-structure">{formatCurrency(effectiveAmount, 0)}</span>
         </div>
         <div className="flex items-center justify-between text-sm mt-2">
           <span className="text-structure/50">Investing in:</span>

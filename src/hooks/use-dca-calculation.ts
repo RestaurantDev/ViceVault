@@ -21,12 +21,39 @@ interface DCACalculationResult {
   summary: PortfolioSummary | null;
   isCalculating: boolean;
   error: string | null;
+  isSimulation?: boolean;
+  simulationStartDate?: string;
+}
+
+/**
+ * Calculate simulated start date (1 year ago) for new user demo
+ */
+function getSimulatedStartDate(): string {
+  const date = new Date();
+  date.setFullYear(date.getFullYear() - 1);
+  return date.toISOString().split("T")[0];
+}
+
+/**
+ * Check if user is "new" (should see simulation mode)
+ */
+function shouldUseSimulation(startDate: string, cleanDays: string[]): boolean {
+  if (!startDate) return true;
+  
+  const start = new Date(startDate);
+  const now = new Date();
+  const daysSinceStart = Math.floor((now.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+  
+  // Use simulation if user has been tracking < 30 days AND has < 5 clean days
+  return daysSinceStart < 30 && cleanDays.length < 5;
 }
 
 /**
  * Hook to calculate DCA portfolio using Web Worker
  * 
  * Offloads heavy computation to a Web Worker to prevent UI freezing.
+ * For new users (< 30 days, < 5 clean days), shows a simulation of
+ * what their portfolio COULD be if they had started 1 year ago.
  */
 export function useDCACalculation(
   history: PricePoint[] | null,
@@ -39,6 +66,8 @@ export function useDCACalculation(
   const [summary, setSummary] = useState<PortfolioSummary | null>(null);
   const [isCalculating, setIsCalculating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isSimulation, setIsSimulation] = useState(false);
+  const [simulationStartDate, setSimulationStartDate] = useState<string | undefined>();
   
   // Worker reference
   const workerRef = useRef<Worker | null>(null);
@@ -68,7 +97,8 @@ export function useDCACalculation(
   
   // Calculate portfolio when inputs change
   useEffect(() => {
-    if (!history?.length || !workerAPIRef.current || !startDate || amount <= 0) {
+    // Need history and worker, but allow empty startDate for simulation
+    if (!history?.length || !workerAPIRef.current || amount <= 0) {
       setPortfolio([]);
       setSummary(null);
       return;
@@ -81,17 +111,43 @@ export function useDCACalculation(
       setError(null);
       
       try {
-        const result = await workerAPIRef.current!.calculateGhostPortfolio(
-          history!,
-          startDate,
-          frequency,
-          amount,
-          cleanDays
-        );
+        // Determine if we should use simulation mode
+        const useSimulation = shouldUseSimulation(startDate, cleanDays);
+        setIsSimulation(useSimulation);
         
-        if (!cancelled) {
-          setPortfolio(result.portfolio);
-          setSummary(result.summary);
+        if (useSimulation) {
+          // NEW USER: Show "what if" simulation for 1 year
+          const simStart = getSimulatedStartDate();
+          setSimulationStartDate(simStart);
+          
+          // Use potential calculation (assumes clean every scheduled day)
+          const result = await workerAPIRef.current!.calculatePotentialPortfolio(
+            history!,
+            simStart,
+            frequency,
+            amount
+          );
+          
+          if (!cancelled) {
+            setPortfolio(result.portfolio);
+            setSummary(result.summary);
+          }
+        } else {
+          // EXISTING USER: Show actual DCA based on clean days
+          setSimulationStartDate(undefined);
+          
+          const result = await workerAPIRef.current!.calculateGhostPortfolio(
+            history!,
+            startDate,
+            frequency,
+            amount,
+            cleanDays
+          );
+          
+          if (!cancelled) {
+            setPortfolio(result.portfolio);
+            setSummary(result.summary);
+          }
         }
       } catch (err) {
         if (!cancelled) {
@@ -113,7 +169,7 @@ export function useDCACalculation(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [history, startDate, frequency, amount, cleanDaysKey]); // cleanDaysKey is a memoized version of cleanDays
   
-  return { portfolio, summary, isCalculating, error };
+  return { portfolio, summary, isCalculating, error, isSimulation, simulationStartDate };
 }
 
 /**
