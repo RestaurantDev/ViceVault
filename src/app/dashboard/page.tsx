@@ -27,12 +27,13 @@ export default function DashboardPage() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<"overview" | "vices" | "calendar" | "import">("overview");
   
-  // Portfolio data state (passed to TruthReport)
-  const [portfolioData, setPortfolioData] = useState({
-    value: 0,
-    invested: 0,
-    gainLoss: 0,
-    gainLossPercent: 0,
+  // Portfolio data state (passed to TruthReport) - now dual format
+  const [portfolioData, setPortfolioData] = useState<{
+    actual: { value: number; invested: number; gainLoss: number; gainLossPercent: number } | null;
+    projection: { value: number; invested: number; gainLoss: number; gainLossPercent: number } | null;
+  }>({
+    actual: null,
+    projection: null,
   });
   
   // Check if onboarding is complete - only after hydration
@@ -166,9 +167,9 @@ export default function DashboardPage() {
             <p className="text-sm text-structure">
               You&apos;re viewing the dashboard in preview mode. Subscribe to unlock full features.
             </p>
-            <a href="/" className="btn-primary text-sm py-2">
+            <Link href="/#pricing" className="btn-primary text-sm py-2">
               Subscribe
-            </a>
+            </Link>
           </motion.div>
         )}
         
@@ -185,9 +186,12 @@ export default function DashboardPage() {
             <p className="text-structure/60 mb-4">
               Let&apos;s set up your vice to start tracking your transformation.
             </p>
-            <a href="/" className="btn-primary inline-block">
+            <button 
+              onClick={() => setActiveSection("vices")}
+              className="btn-primary inline-block"
+            >
               Set Up My Vice
-            </a>
+            </button>
           </motion.div>
         )}
         
@@ -212,10 +216,8 @@ export default function DashboardPage() {
               
               {/* Truth Report */}
               <TruthReport
-                portfolioValue={portfolioData.value}
-                totalInvested={portfolioData.invested}
-                gainLoss={portfolioData.gainLoss}
-                gainLossPercent={portfolioData.gainLossPercent}
+                actual={portfolioData.actual}
+                projection={portfolioData.projection}
               />
               
               {/* Cash Flow */}

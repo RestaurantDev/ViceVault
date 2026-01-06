@@ -11,25 +11,29 @@ import {
   Flame,
   Vault,
   X,
+  Target,
 } from "lucide-react";
 import { toPng } from "html-to-image";
 import { cn, formatCurrency, getTodayISO } from "@/lib/utils";
 import { useViceConfig, useCleanDays, useSelectedAsset } from "@/store/vice-store";
 import { ASSETS } from "@/lib/constants";
 
-interface TruthReportProps {
-  portfolioValue: number;
-  totalInvested: number;
+interface PortfolioData {
+  value: number;
+  invested: number;
   gainLoss: number;
   gainLossPercent: number;
+}
+
+interface TruthReportProps {
+  actual: PortfolioData | null;
+  projection: PortfolioData | null;
   className?: string;
 }
 
 export function TruthReport({
-  portfolioValue,
-  totalInvested,
-  gainLoss,
-  gainLossPercent,
+  actual,
+  projection,
   className,
 }: TruthReportProps) {
   const cardRef = useRef<HTMLDivElement>(null);
@@ -45,6 +49,9 @@ export function TruthReport({
   
   // Calculate streak
   const currentStreak = calculateStreak(cleanDays);
+  
+  // Determine if user has started tracking
+  const hasActualData = (actual?.invested || 0) > 0;
   
   // Format start date
   const formattedStartDate = startDate
@@ -118,10 +125,14 @@ export function TruthReport({
       const blob = await res.blob();
       const file = new File([blob], "truth-report.png", { type: "image/png" });
       
+      const shareText = hasActualData
+        ? `I've saved ${formatCurrency(actual?.invested || 0, 0)} so far, on track for ${formatCurrency(projection?.value || 0, 0)} in 1 year!`
+        : `If I invest my ${viceName} money, I could have ${formatCurrency(projection?.value || 0, 0)} in 1 year!`;
+      
       if (navigator.share && navigator.canShare({ files: [file] })) {
         await navigator.share({
           title: "My Vice Vault Truth Report",
-          text: `If I had invested my ${viceName} money since ${formattedStartDate}, I would have ${formatCurrency(portfolioValue, 0)} today!`,
+          text: shareText,
           files: [file],
         });
       } else {
@@ -173,32 +184,73 @@ export function TruthReport({
           </div>
           
           {/* The Truth Statement */}
-          <div className="mb-8">
-            <p className="text-surface/70 text-sm mb-2">If I had invested my</p>
+          <div className="mb-6">
+            <p className="text-surface/70 text-sm mb-2">
+              {hasActualData ? "By investing my" : "If I invest my"}
+            </p>
             <p className="text-3xl font-bold text-alpha mb-2">
               {viceName || "vice"} money
             </p>
             <p className="text-surface/70 text-sm">
-              into {assetInfo?.name || selectedAsset} since {formattedStartDate}...
+              into {assetInfo?.name || selectedAsset}
+              {hasActualData ? ` since ${formattedStartDate}` : ""}...
             </p>
           </div>
           
-          {/* The Number */}
-          <div className="bg-surface/10 rounded-xl p-6 mb-8">
-            <p className="text-surface/60 text-sm mb-1">I would have</p>
-            <div className="flex items-baseline gap-2">
-              <span className="text-5xl font-bold text-alpha tabular-nums">
-                {formatCurrency(portfolioValue, 0)}
-              </span>
-            </div>
-            <div className="flex items-center gap-4 mt-3 text-sm">
-              <div className="flex items-center gap-1">
-                <TrendingUp className="w-4 h-4 text-alpha" strokeWidth={1.5} />
-                <span className={gainLoss >= 0 ? "text-alpha" : "text-risk"}>
-                  {gainLoss >= 0 ? "+" : ""}{formatCurrency(gainLoss, 0)} ({gainLossPercent >= 0 ? "+" : ""}{gainLossPercent.toFixed(1)}%)
-                </span>
+          {/* Dual Display: Actual vs Projection */}
+          <div className="grid grid-cols-1 gap-4 mb-6">
+            {/* Actual Progress (if available) */}
+            {hasActualData && actual && (
+              <div className="bg-alpha/20 rounded-xl p-5">
+                <div className="flex items-center gap-2 mb-2">
+                  <TrendingUp className="w-4 h-4 text-alpha" strokeWidth={1.5} />
+                  <p className="text-surface/80 text-sm font-medium">My Progress So Far</p>
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-4xl font-bold text-alpha tabular-nums">
+                    {formatCurrency(actual.value, 0)}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 mt-2 text-sm">
+                  <span className={actual.gainLoss >= 0 ? "text-alpha" : "text-risk"}>
+                    {actual.gainLoss >= 0 ? "+" : ""}{formatCurrency(actual.gainLoss, 0)}
+                  </span>
+                  <span className="text-surface/50">
+                    ({actual.gainLossPercent >= 0 ? "+" : ""}{actual.gainLossPercent.toFixed(1)}%)
+                  </span>
+                </div>
               </div>
-            </div>
+            )}
+            
+            {/* 1-Year Projection */}
+            {projection && (
+              <div className={cn(
+                "rounded-xl p-5",
+                hasActualData ? "bg-surface/10" : "bg-alpha/20"
+              )}>
+                <div className="flex items-center gap-2 mb-2">
+                  <Target className="w-4 h-4 text-surface/70" strokeWidth={1.5} />
+                  <p className="text-surface/80 text-sm font-medium">
+                    {hasActualData ? "On Track For (1 Year)" : "I Could Have (1 Year)"}
+                  </p>
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className={cn(
+                    "text-4xl font-bold tabular-nums",
+                    hasActualData ? "text-surface" : "text-alpha"
+                  )}>
+                    {formatCurrency(projection.value, 0)}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 mt-2 text-sm">
+                  <span className={cn(
+                    projection.gainLoss >= 0 ? "text-alpha/80" : "text-risk/80"
+                  )}>
+                    {projection.gainLoss >= 0 ? "+" : ""}{formatCurrency(projection.gainLoss, 0)} potential
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
           
           {/* Stats Row */}
@@ -220,7 +272,7 @@ export function TruthReport({
             </div>
             <div className="text-center">
               <div className="text-2xl font-bold text-surface tabular-nums">
-                {formatCurrency(totalInvested, 0)}
+                {formatCurrency(actual?.invested || 0, 0)}
               </div>
               <div className="text-xs text-surface/50">Invested</div>
             </div>
@@ -386,4 +438,3 @@ function calculateStreak(cleanDays: string[]): number {
   
   return streak;
 }
-

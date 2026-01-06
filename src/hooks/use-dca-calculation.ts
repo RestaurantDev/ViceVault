@@ -6,7 +6,7 @@ import type { DCAWorkerAPI } from "@/workers/dca-engine.worker";
 import type { PricePoint, PortfolioPoint } from "@/types";
 import type { Frequency } from "@/lib/constants";
 
-interface PortfolioSummary {
+export interface PortfolioSummary {
   totalCashSpent: number;
   currentValue: number;
   totalShares: number;
@@ -16,44 +16,39 @@ interface PortfolioSummary {
   purchasesCount: number;
 }
 
-interface DCACalculationResult {
+interface PortfolioData {
   portfolio: PortfolioPoint[];
   summary: PortfolioSummary | null;
-  isCalculating: boolean;
-  error: string | null;
-  isSimulation?: boolean;
-  simulationStartDate?: string;
 }
 
 /**
- * Calculate simulated start date (1 year ago) for new user demo
+ * Dual Portfolio Result - always returns both actual progress and 1-year projection
  */
-function getSimulatedStartDate(): string {
+export interface DualPortfolioResult {
+  actual: PortfolioData;
+  projection: PortfolioData;
+  isCalculating: boolean;
+  error: string | null;
+}
+
+/**
+ * Calculate simulated start date (1 year ago) for projection
+ */
+function getProjectionStartDate(): string {
   const date = new Date();
   date.setFullYear(date.getFullYear() - 1);
   return date.toISOString().split("T")[0];
 }
 
 /**
- * Check if user is "new" (should see simulation mode)
- */
-function shouldUseSimulation(startDate: string, cleanDays: string[]): boolean {
-  if (!startDate) return true;
-  
-  const start = new Date(startDate);
-  const now = new Date();
-  const daysSinceStart = Math.floor((now.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
-  
-  // Use simulation if user has been tracking < 30 days AND has < 5 clean days
-  return daysSinceStart < 30 && cleanDays.length < 5;
-}
-
-/**
- * Hook to calculate DCA portfolio using Web Worker
+ * Hook to calculate BOTH actual portfolio AND 1-year projection
  * 
- * Offloads heavy computation to a Web Worker to prevent UI freezing.
- * For new users (< 30 days, < 5 clean days), shows a simulation of
- * what their portfolio COULD be if they had started 1 year ago.
+ * This "Dual View" approach ensures users always see:
+ * 1. Their ACTUAL progress (based on real clean days)
+ * 2. Their 1-YEAR POTENTIAL (what they could achieve if consistent)
+ * 
+ * This maintains motivation and prevents the "deflation" when 
+ * transitioning from simulation to real data.
  */
 export function useDCACalculation(
   history: PricePoint[] | null,
@@ -61,13 +56,17 @@ export function useDCACalculation(
   frequency: Frequency,
   amount: number,
   cleanDays: string[]
-): DCACalculationResult {
-  const [portfolio, setPortfolio] = useState<PortfolioPoint[]>([]);
-  const [summary, setSummary] = useState<PortfolioSummary | null>(null);
+): DualPortfolioResult {
+  // Actual portfolio state
+  const [actualPortfolio, setActualPortfolio] = useState<PortfolioPoint[]>([]);
+  const [actualSummary, setActualSummary] = useState<PortfolioSummary | null>(null);
+  
+  // Projection portfolio state (1-year potential)
+  const [projectionPortfolio, setProjectionPortfolio] = useState<PortfolioPoint[]>([]);
+  const [projectionSummary, setProjectionSummary] = useState<PortfolioSummary | null>(null);
+  
   const [isCalculating, setIsCalculating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isSimulation, setIsSimulation] = useState(false);
-  const [simulationStartDate, setSimulationStartDate] = useState<string | undefined>();
   
   // Worker reference
   const workerRef = useRef<Worker | null>(null);
@@ -95,12 +94,23 @@ export function useDCACalculation(
   // Memoize inputs to prevent unnecessary recalculations
   const cleanDaysKey = useMemo(() => cleanDays.join(","), [cleanDays]);
   
-  // Calculate portfolio when inputs change
+  // Calculate BOTH portfolios when inputs change
   useEffect(() => {
-    // Need history and worker, but allow empty startDate for simulation
-    if (!history?.length || !workerAPIRef.current || amount <= 0) {
-      setPortfolio([]);
-      setSummary(null);
+    // Must have history data and worker ready
+    if (!history?.length || !workerAPIRef.current) {
+      setActualPortfolio([]);
+      setActualSummary(null);
+      setProjectionPortfolio([]);
+      setProjectionSummary(null);
+      return;
+    }
+    
+    // If amount is 0 or less, show empty (user hasn't set up vice yet)
+    if (amount <= 0) {
+      setActualPortfolio([]);
+      setActualSummary(null);
+      setProjectionPortfolio([]);
+      setProjectionSummary(null);
       return;
     }
     
@@ -111,43 +121,44 @@ export function useDCACalculation(
       setError(null);
       
       try {
-        // Determine if we should use simulation mode
-        const useSimulation = shouldUseSimulation(startDate, cleanDays);
-        setIsSimulation(useSimulation);
+        // Calculate BOTH in parallel for better performance
+        const projectionStartDate = getProjectionStartDate();
         
-        if (useSimulation) {
-          // NEW USER: Show "what if" simulation for 1 year
-          const simStart = getSimulatedStartDate();
-          setSimulationStartDate(simStart);
+        // For ACTUAL portfolio, we use the projection start date (1 year ago)
+        // but limit purchases to the NUMBER of clean days logged.
+        // This shows: "If you had been doing this for a year with N clean days..."
+        // This provides meaningful data even for new users.
+        const actualStartDate = projectionStartDate;
+        
+        const [actualResult, projectionResult] = await Promise.all([
+          // ACTUAL: Simulates N purchases (where N = clean days count) over the past year
+          cleanDays.length > 0
+            ? workerAPIRef.current!.calculateGhostPortfolio(
+                history!,
+                actualStartDate,
+                frequency,
+                amount,
+                cleanDays
+              )
+            : Promise.resolve({ portfolio: [], summary: null }),
           
-          // Use potential calculation (assumes clean every scheduled day)
-          const result = await workerAPIRef.current!.calculatePotentialPortfolio(
+          // PROJECTION: What they could achieve in 1 year if consistent
+          workerAPIRef.current!.calculatePotentialPortfolio(
             history!,
-            simStart,
+            projectionStartDate,
             frequency,
             amount
-          );
+          ),
+        ]);
+        
+        if (!cancelled) {
+          // Set actual (may be empty if no clean days)
+          setActualPortfolio(actualResult.portfolio);
+          setActualSummary(actualResult.summary);
           
-          if (!cancelled) {
-            setPortfolio(result.portfolio);
-            setSummary(result.summary);
-          }
-        } else {
-          // EXISTING USER: Show actual DCA based on clean days
-          setSimulationStartDate(undefined);
-          
-          const result = await workerAPIRef.current!.calculateGhostPortfolio(
-            history!,
-            startDate,
-            frequency,
-            amount,
-            cleanDays
-          );
-          
-          if (!cancelled) {
-            setPortfolio(result.portfolio);
-            setSummary(result.summary);
-          }
+          // Set projection
+          setProjectionPortfolio(projectionResult.portfolio);
+          setProjectionSummary(projectionResult.summary);
         }
       } catch (err) {
         if (!cancelled) {
@@ -167,88 +178,20 @@ export function useDCACalculation(
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [history, startDate, frequency, amount, cleanDaysKey]); // cleanDaysKey is a memoized version of cleanDays
+  }, [history, startDate, frequency, amount, cleanDaysKey]);
   
-  return { portfolio, summary, isCalculating, error, isSimulation, simulationStartDate };
-}
-
-/**
- * Hook to calculate potential portfolio (if user stayed clean every day)
- */
-export function usePotentialCalculation(
-  history: PricePoint[] | null,
-  startDate: string,
-  frequency: Frequency,
-  amount: number
-): DCACalculationResult {
-  const [portfolio, setPortfolio] = useState<PortfolioPoint[]>([]);
-  const [summary, setSummary] = useState<PortfolioSummary | null>(null);
-  const [isCalculating, setIsCalculating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  
-  const workerRef = useRef<Worker | null>(null);
-  const workerAPIRef = useRef<Remote<DCAWorkerAPI> | null>(null);
-  
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    
-    try {
-      workerRef.current = new Worker(
-        new URL("../workers/dca-engine.worker.ts", import.meta.url)
-      );
-      workerAPIRef.current = wrap<DCAWorkerAPI>(workerRef.current);
-    } catch (err) {
-      console.error("Failed to initialize potential worker:", err);
-    }
-    
-    return () => {
-      workerRef.current?.terminate();
-    };
-  }, []);
-  
-  useEffect(() => {
-    if (!history?.length || !workerAPIRef.current || !startDate || amount <= 0) {
-      setPortfolio([]);
-      setSummary(null);
-      return;
-    }
-    
-    let cancelled = false;
-    
-    async function calculate() {
-      setIsCalculating(true);
-      
-      try {
-        const result = await workerAPIRef.current!.calculatePotentialPortfolio(
-          history!,
-          startDate,
-          frequency,
-          amount
-        );
-        
-        if (!cancelled) {
-          setPortfolio(result.portfolio);
-          setSummary(result.summary);
-        }
-      } catch {
-        if (!cancelled) {
-          setError("Failed to calculate potential portfolio");
-        }
-      } finally {
-        if (!cancelled) {
-          setIsCalculating(false);
-        }
-      }
-    }
-    
-    calculate();
-    
-    return () => {
-      cancelled = true;
-    };
-  }, [history, startDate, frequency, amount]);
-  
-  return { portfolio, summary, isCalculating, error };
+  return {
+    actual: {
+      portfolio: actualPortfolio,
+      summary: actualSummary,
+    },
+    projection: {
+      portfolio: projectionPortfolio,
+      summary: projectionSummary,
+    },
+    isCalculating,
+    error,
+  };
 }
 
 /**
@@ -343,4 +286,3 @@ export function useMarketData(symbol: string) {
   
   return { data, isLoading, error, isUsingFallback };
 }
-

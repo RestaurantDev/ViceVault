@@ -82,7 +82,11 @@ function shouldPurchaseOnDate(
  * Main DCA calculation function
  * 
  * This simulates what would have happened if the user invested their vice money
- * on each "clean day" according to their frequency.
+ * consistently based on the NUMBER of clean days they've logged.
+ * 
+ * Logic: User has logged N clean days. We simulate investing on the first N
+ * frequency-matching dates from the start date, showing what the portfolio
+ * would be worth today.
  */
 function calculateGhostPortfolio(
   history: PricePoint[],
@@ -91,8 +95,22 @@ function calculateGhostPortfolio(
   amount: number,
   cleanDays: string[]
 ): DCAResult {
-  // Create a Set for O(1) lookups
-  const cleanDaysSet = new Set(cleanDays);
+  const numCleanDays = cleanDays.length;
+  
+  if (numCleanDays === 0) {
+    return {
+      portfolio: [],
+      summary: {
+        totalCashSpent: 0,
+        currentValue: 0,
+        totalShares: 0,
+        gainLoss: 0,
+        gainLossPercent: 0,
+        cleanDaysCount: 0,
+        purchasesCount: 0,
+      },
+    };
+  }
   
   let totalShares = 0;
   let totalCashSpent = 0;
@@ -108,9 +126,9 @@ function calculateGhostPortfolio(
     
     // Check if this day qualifies for a purchase:
     // 1. The date matches the frequency pattern
-    // 2. The user logged this as a clean day
+    // 2. We haven't used up all our clean days yet
     const shouldPurchase = shouldPurchaseOnDate(dateStr, frequency, startDate) && 
-                           cleanDaysSet.has(dateStr);
+                           purchasesCount < numCleanDays;
     
     if (shouldPurchase && point.close > 0) {
       const sharesToBuy = amount / point.close;
@@ -147,7 +165,7 @@ function calculateGhostPortfolio(
       totalShares,
       gainLoss,
       gainLossPercent,
-      cleanDaysCount: cleanDays.length,
+      cleanDaysCount: numCleanDays,
       purchasesCount,
     },
   };

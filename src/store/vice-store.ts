@@ -138,19 +138,21 @@ export const useViceStore = create<ViceStore>()(
         };
         
         const vices = [...get().vices, newVice];
+        const currentStartDate = get().startDate;
         
-        // Update legacy fields if this is the first vice
-        if (vices.length === 1) {
-          set({
-            vices,
-            viceName: newVice.name,
-            viceAmount: newVice.amount,
-            frequency: newVice.frequency,
-            startDate: get().startDate || today,
-          });
-        } else {
-          set({ vices });
-        }
+        // Get primary (first active) vice for legacy fields
+        const activeVices = vices.filter((v) => v.isActive);
+        const primaryVice = activeVices[0];
+        
+        // Legacy viceAmount should be the PRIMARY vice's amount (for DCA per-occurrence calculation)
+        // The totalViceAmount is calculated separately in useViceConfig
+        set({
+          vices,
+          viceName: primaryVice?.name || newVice.name,
+          viceAmount: primaryVice?.amount || newVice.amount,
+          frequency: primaryVice?.frequency || newVice.frequency,
+          startDate: currentStartDate || today,
+        });
       },
 
       /**
@@ -177,21 +179,18 @@ export const useViceStore = create<ViceStore>()(
        */
       removeVice: (id: string) => {
         const vices = get().vices.filter((v) => v.id !== id);
-        set({ vices });
         
-        // Update legacy fields
-        if (vices.length > 0) {
-          set({
-            viceName: vices[0].name,
-            viceAmount: vices[0].amount,
-            frequency: vices[0].frequency,
-          });
-        } else {
-          set({
-            viceName: "",
-            viceAmount: 0,
-          });
-        }
+        // Get primary (first active) vice for legacy fields
+        const activeVices = vices.filter((v) => v.isActive);
+        const primaryVice = activeVices[0];
+        
+        // Update state with new vices - use primary vice's amount for legacy field
+        set({
+          vices,
+          viceName: primaryVice?.name || "",
+          viceAmount: primaryVice?.amount || 0,
+          frequency: primaryVice?.frequency || "weekly",
+        });
       },
 
       /**
@@ -201,7 +200,18 @@ export const useViceStore = create<ViceStore>()(
         const vices = get().vices.map((v) =>
           v.id === id ? { ...v, isActive: !v.isActive } : v
         );
-        set({ vices });
+        
+        // Get primary (first active) vice for legacy fields
+        const activeVices = vices.filter((v) => v.isActive);
+        const primaryVice = activeVices[0];
+        
+        // Use primary vice's amount for legacy field
+        set({
+          vices,
+          viceName: primaryVice?.name || "",
+          viceAmount: primaryVice?.amount || 0,
+          frequency: primaryVice?.frequency || "weekly",
+        });
       },
 
       /**
@@ -442,9 +452,11 @@ export const useViceConfig = () => {
       )
     : null;
   
+  // viceAmount should be the PRIMARY vice's per-occurrence amount for DCA calculation
+  // totalViceAmount is the sum of all amounts (for display in StreakButton)
   return {
     viceName: primaryVice?.name || legacyViceName || "My Vice",
-    viceAmount: totalAmount > 0 ? totalAmount : legacyViceAmount,
+    viceAmount: primaryVice?.amount || legacyViceAmount || 0,
     frequency: primaryVice?.frequency || legacyFrequency,
     startDate: storedStartDate || earliestViceDate || "",
     vices,
