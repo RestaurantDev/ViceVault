@@ -56,6 +56,12 @@ const initialState: ViceState = {
   netIncome: 0,
   fixedCosts: 0,
   
+  // Savings Goals
+  savingsGoals: [],
+  
+  // Calendar Notes
+  calendarNotes: {},
+  
   // Cache
   marketDataCache: {},
   lastFetchedAt: {},
@@ -305,6 +311,58 @@ export const useViceStore = create<ViceStore>()(
       },
 
       /**
+       * Add a new savings goal
+       */
+      addSavingsGoal: (goalData) => {
+        const newGoal = {
+          ...goalData,
+          id: generateId(),
+          createdAt: getTodayISO(),
+        };
+        set({ savingsGoals: [...get().savingsGoals, newGoal] });
+      },
+
+      /**
+       * Update an existing savings goal
+       */
+      updateSavingsGoal: (id: string, updates) => {
+        const goals = get().savingsGoals.map((g) =>
+          g.id === id ? { ...g, ...updates } : g
+        );
+        set({ savingsGoals: goals });
+      },
+
+      /**
+       * Remove a savings goal
+       */
+      removeSavingsGoal: (id: string) => {
+        const goals = get().savingsGoals.filter((g) => g.id !== id);
+        set({ savingsGoals: goals });
+      },
+
+      /**
+       * Set a note for a calendar day
+       */
+      setCalendarNote: (date: string, note: string) => {
+        const notes = { ...get().calendarNotes };
+        if (note.trim()) {
+          notes[date] = note.trim();
+        } else {
+          delete notes[date];
+        }
+        set({ calendarNotes: notes });
+      },
+
+      /**
+       * Remove a note from a calendar day
+       */
+      removeCalendarNote: (date: string) => {
+        const notes = { ...get().calendarNotes };
+        delete notes[date];
+        set({ calendarNotes: notes });
+      },
+
+      /**
        * Get total annual cost of all active vices
        */
       getTotalViceAmount: () => {
@@ -351,6 +409,8 @@ export const useViceStore = create<ViceStore>()(
         selectedAsset: state.selectedAsset,
         netIncome: state.netIncome,
         fixedCosts: state.fixedCosts,
+        savingsGoals: state.savingsGoals,
+        calendarNotes: state.calendarNotes,
         marketDataCache: state.marketDataCache,
         lastFetchedAt: state.lastFetchedAt,
       }),
@@ -359,45 +419,17 @@ export const useViceStore = create<ViceStore>()(
 );
 
 /**
- * Helper to compute vice aggregates
- */
-function computeViceConfig(state: ViceState) {
-  const activeVices = state.vices.filter((v) => v.isActive);
-  const totalAmount = activeVices.reduce((sum, v) => sum + v.amount, 0);
-  const primaryVice = activeVices[0];
-  
-  // Find earliest vice creation date for start date
-  const earliestViceDate = activeVices.length > 0
-    ? activeVices.reduce((earliest, v) => 
-        v.createdAt < earliest ? v.createdAt : earliest, 
-        activeVices[0].createdAt
-      )
-    : null;
-  
-  // Use stored startDate, or earliest vice date, or empty string
-  const effectiveStartDate = state.startDate || earliestViceDate || "";
-  
-  return {
-    viceName: primaryVice?.name || state.viceName || "My Vice",
-    viceAmount: totalAmount > 0 ? totalAmount : state.viceAmount,
-    frequency: primaryVice?.frequency || state.frequency,
-    startDate: effectiveStartDate,
-    totalViceAmount: totalAmount,
-    activeVicesCount: activeVices.length,
-  };
-}
-
-/**
  * Selector hooks for optimized re-renders
  */
 export const useViceConfig = () => {
+  // Get primitive values directly to avoid re-render loops
   const vices = useViceStore((state) => state.vices);
-  const viceName = useViceStore((state) => state.viceName);
-  const viceAmount = useViceStore((state) => state.viceAmount);
-  const frequency = useViceStore((state) => state.frequency);
-  const startDate = useViceStore((state) => state.startDate);
+  const legacyViceName = useViceStore((state) => state.viceName);
+  const legacyViceAmount = useViceStore((state) => state.viceAmount);
+  const legacyFrequency = useViceStore((state) => state.frequency);
+  const storedStartDate = useViceStore((state) => state.startDate);
   
-  // Compute derived values
+  // Compute derived values (these are computed each render but primitives don't change often)
   const activeVices = vices.filter((v) => v.isActive);
   const totalAmount = activeVices.reduce((sum, v) => sum + v.amount, 0);
   const primaryVice = activeVices[0];
@@ -411,10 +443,10 @@ export const useViceConfig = () => {
     : null;
   
   return {
-    viceName: primaryVice?.name || viceName || "My Vice",
-    viceAmount: totalAmount > 0 ? totalAmount : viceAmount,
-    frequency: primaryVice?.frequency || frequency,
-    startDate: startDate || earliestViceDate || "",
+    viceName: primaryVice?.name || legacyViceName || "My Vice",
+    viceAmount: totalAmount > 0 ? totalAmount : legacyViceAmount,
+    frequency: primaryVice?.frequency || legacyFrequency,
+    startDate: storedStartDate || earliestViceDate || "",
     vices,
     activeVices,
     totalViceAmount: totalAmount,
@@ -424,8 +456,10 @@ export const useViceConfig = () => {
 export const useVices = () =>
   useViceStore((state) => state.vices);
 
-export const useActiveVices = () =>
-  useViceStore((state) => state.vices.filter((v) => v.isActive));
+export const useActiveVices = () => {
+  const vices = useViceStore((state) => state.vices);
+  return vices.filter((v) => v.isActive);
+};
 
 export const useCleanDays = () =>
   useViceStore((state) => state.cleanDays);
@@ -464,6 +498,17 @@ export const useMarketCache = () =>
       lastFetched: state.lastFetchedAt,
     }))
   );
+
+export const useSavingsGoals = () =>
+  useViceStore((state) => state.savingsGoals);
+
+export const useActiveSavingsGoals = () => {
+  const goals = useViceStore((state) => state.savingsGoals);
+  return goals.filter((g) => g.isActive);
+};
+
+export const useCalendarNotes = () =>
+  useViceStore((state) => state.calendarNotes);
 
 /**
  * Computed selector for total annual vice cost

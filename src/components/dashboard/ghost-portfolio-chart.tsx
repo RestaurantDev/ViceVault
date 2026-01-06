@@ -11,7 +11,6 @@ import {
   Tooltip,
   ResponsiveContainer,
   ReferenceLine,
-  ReferenceArea,
 } from "recharts";
 import { TrendingUp, TrendingDown, Loader2, Table as TableIcon, Clock } from "lucide-react";
 import { cn, formatCurrency, formatChartDate } from "@/lib/utils";

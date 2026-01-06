@@ -108,6 +108,12 @@ export interface ViceState {
   netIncome: number;
   fixedCosts: number;
   
+  // Savings Goals
+  savingsGoals: SavingsGoal[];
+  
+  // Calendar Notes
+  calendarNotes: Record<string, string>; // date -> note text
+  
   // Cached market data
   marketDataCache: Record<string, PricePoint[]>;
   lastFetchedAt: Record<string, number>;
@@ -141,6 +147,15 @@ export interface ViceActions {
   
   // Budget
   setFinancials: (netIncome: number, fixedCosts: number) => void;
+  
+  // Savings Goals
+  addSavingsGoal: (goal: Omit<SavingsGoal, "id" | "createdAt">) => void;
+  updateSavingsGoal: (id: string, updates: Partial<SavingsGoal>) => void;
+  removeSavingsGoal: (id: string) => void;
+  
+  // Calendar Notes
+  setCalendarNote: (date: string, note: string) => void;
+  removeCalendarNote: (date: string) => void;
   
   // Market data cache
   cacheMarketData: (symbol: string, data: PricePoint[]) => void;
@@ -178,5 +193,28 @@ export interface CashFlowAnalysis {
   strangulationRatio: number;
   freedomRunway: number;
   annualViceCost: number;
+}
+
+/**
+ * Savings goal for budgeting
+ */
+export interface SavingsGoal {
+  id: string;
+  type: "weekly" | "monthly";
+  targetAmount: number;
+  category: "vice-savings" | "emergency" | "vacation" | "debt" | "custom";
+  customName?: string; // For custom category
+  createdAt: string; // ISO date
+  isActive: boolean;
+}
+
+/**
+ * Calendar note for a specific day
+ */
+export interface CalendarNote {
+  date: string; // ISO date
+  text: string;
+  createdAt: string; // ISO timestamp
+  updatedAt: string; // ISO timestamp
 }
 

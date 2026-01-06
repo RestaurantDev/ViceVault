@@ -10,9 +10,11 @@ import {
   Check,
 } from "lucide-react";
 import { cn, formatCurrency, getTodayISO } from "@/lib/utils";
-import { useViceStore, useCleanDays, useStreakFreezes, useViceConfig } from "@/store/vice-store";
+import { useViceStore, useCleanDays, useStreakFreezes, useViceConfig, useCalendarNotes } from "@/store/vice-store";
 import { useHaptics } from "@/hooks/use-haptics";
 import { useStoreHydration } from "@/hooks/use-store-hydration";
+import { GoalProgress } from "./goal-progress";
+import { DayDetailModal } from "./day-detail-modal";
 
 interface StreakCalendarProps {
   className?: string;
@@ -21,17 +23,35 @@ interface StreakCalendarProps {
 export function StreakCalendar({ className }: StreakCalendarProps) {
   const isHydrated = useStoreHydration();
   const cleanDays = useCleanDays();
+  const calendarNotes = useCalendarNotes();
   const { remaining: freezesRemaining, isSubscribed } = useStreakFreezes();
   const { startDate, viceAmount } = useViceConfig();
   
   const logCleanDay = useViceStore((s) => s.logCleanDay);
-  const removeCleanDay = useViceStore((s) => s.removeCleanDay);
   const applyStreakFreeze = useViceStore((s) => s.useStreakFreeze);
   
   const { success, tap } = useHaptics();
   
   // Current view month
   const [viewDate, setViewDate] = useState(() => new Date());
+  
+  // Selected day for modal
+  const [selectedDay, setSelectedDay] = useState<CalendarDay | null>(null);
+  
+  // Get device locale for date formatting
+  const locale = typeof navigator !== "undefined" ? navigator.language : "en-US";
+  
+  // Generate localized weekday names
+  const weekdays = useMemo(() => {
+    const days: string[] = [];
+    const baseDate = new Date(2024, 0, 7); // A Sunday
+    for (let i = 0; i < 7; i++) {
+      const day = new Date(baseDate);
+      day.setDate(baseDate.getDate() + i);
+      days.push(day.toLocaleDateString(locale, { weekday: "short" }));
+    }
+    return days;
+  }, [locale]);
   
   // Get calendar data for current view
   const calendarData = useMemo(() => {
@@ -119,7 +139,8 @@ export function StreakCalendar({ className }: StreakCalendarProps) {
     if (day.isFuture || day.isBeforeStart || !day.isCurrentMonth) return;
     
     if (day.isClean) {
-      removeCleanDay(day.date);
+      // Open modal to view details/add note (instead of removing clean day)
+      setSelectedDay(day);
       tap();
     } else {
       // Check if this is today
@@ -138,6 +159,10 @@ export function StreakCalendar({ className }: StreakCalendarProps) {
             }));
             success();
           }
+        } else {
+          // Open modal to add a note even for non-clean days
+          setSelectedDay(day);
+          tap();
         }
       }
     }
@@ -157,7 +182,7 @@ export function StreakCalendar({ className }: StreakCalendarProps) {
     tap();
   };
   
-  const monthYear = viewDate.toLocaleDateString("en-US", {
+  const monthYear = viewDate.toLocaleDateString(locale, {
     month: "long",
     year: "numeric",
   });
@@ -188,6 +213,9 @@ export function StreakCalendar({ className }: StreakCalendarProps) {
         </div>
       </div>
       
+      {/* Goal Progress */}
+      <GoalProgress className="mb-6" />
+      
       {/* Month Navigation */}
       <div className="flex items-center justify-between mb-4">
         <button
@@ -216,7 +244,7 @@ export function StreakCalendar({ className }: StreakCalendarProps) {
       
       {/* Weekday Headers */}
       <div className="grid grid-cols-7 gap-1 mb-2">
-        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
+        {weekdays.map((day) => (
           <div
             key={day}
             className="text-center text-xs font-medium text-structure/40 py-2"
@@ -233,6 +261,8 @@ export function StreakCalendar({ className }: StreakCalendarProps) {
             key={`${day.date}-${index}`}
             day={day}
             onClick={() => handleDayClick(day)}
+            savingsAmount={viceAmount}
+            hasNote={!!calendarNotes[day.date]}
           />
         ))}
       </div>
@@ -284,6 +314,13 @@ export function StreakCalendar({ className }: StreakCalendarProps) {
           <span>Future</span>
         </div>
       </div>
+      
+      {/* Day Detail Modal */}
+      <DayDetailModal
+        date={selectedDay?.date || null}
+        isClean={selectedDay?.isClean || false}
+        onClose={() => setSelectedDay(null)}
+      />
     </div>
   );
 }
@@ -301,9 +338,11 @@ interface CalendarDay {
 interface CalendarCellProps {
   day: CalendarDay;
   onClick: () => void;
+  savingsAmount: number;
+  hasNote?: boolean;
 }
 
-function CalendarCell({ day, onClick }: CalendarCellProps) {
+function CalendarCell({ day, onClick, savingsAmount, hasNote }: CalendarCellProps) {
   const isClickable = day.isCurrentMonth && !day.isFuture && !day.isBeforeStart;
   
   return (
@@ -312,7 +351,8 @@ function CalendarCell({ day, onClick }: CalendarCellProps) {
       onClick={onClick}
       disabled={!isClickable}
       className={cn(
-        "relative aspect-square rounded-lg flex items-center justify-center text-sm font-medium transition-all",
+        "relative rounded-lg flex flex-col items-center justify-center text-sm font-medium transition-all",
+        "min-h-[3.5rem] p-1",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-alpha focus-visible:ring-offset-1",
         // Non-current month
         !day.isCurrentMonth && "text-structure/20",
@@ -330,9 +370,17 @@ function CalendarCell({ day, onClick }: CalendarCellProps) {
         // Before start
         day.isBeforeStart && "text-structure/20 cursor-not-allowed"
       )}
-      aria-label={`${day.date}${day.isClean ? ", clean" : ""}${day.isToday ? ", today" : ""}`}
+      aria-label={`${day.date}${day.isClean ? `, saved $${savingsAmount}` : ""}${day.isToday ? ", today" : ""}`}
     >
-      {day.dayNumber}
+      {/* Day number */}
+      <span className="leading-none">{day.dayNumber}</span>
+      
+      {/* Savings amount on clean days */}
+      {day.isClean && savingsAmount > 0 && (
+        <span className="text-[10px] font-semibold text-alpha/80 leading-none mt-0.5">
+          ${savingsAmount}
+        </span>
+      )}
       
       {/* Clean indicator */}
       {day.isClean && (
@@ -343,6 +391,11 @@ function CalendarCell({ day, onClick }: CalendarCellProps) {
         >
           <Check className="w-2.5 h-2.5 text-white" strokeWidth={3} />
         </motion.div>
+      )}
+      
+      {/* Note indicator */}
+      {hasNote && (
+        <div className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 w-1.5 h-1.5 bg-structure/40 rounded-full" />
       )}
     </motion.button>
   );
