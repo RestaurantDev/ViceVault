@@ -34,23 +34,43 @@ export function formatNumber(num: number, decimals: number = 0): string {
  * Format a date as a readable string
  */
 export function formatDate(date: string | Date): string {
-  const d = typeof date === "string" ? new Date(date) : date;
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(d);
+  try {
+    const d = typeof date === "string" ? new Date(date) : date;
+    
+    // Check if date is valid
+    if (isNaN(d.getTime())) {
+      return date?.toString() || "Invalid date";
+    }
+    
+    return new Intl.DateTimeFormat("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    }).format(d);
+  } catch {
+    return date?.toString() || "Invalid date";
+  }
 }
 
 /**
  * Format a date for charts (shorter)
  */
 export function formatChartDate(date: string | Date): string {
-  const d = typeof date === "string" ? new Date(date) : date;
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    year: "2-digit",
-  }).format(d);
+  try {
+    const d = typeof date === "string" ? new Date(date) : date;
+    
+    // Check if date is valid
+    if (isNaN(d.getTime())) {
+      return date?.toString() || "N/A";
+    }
+    
+    return new Intl.DateTimeFormat("en-US", {
+      month: "short",
+      year: "2-digit",
+    }).format(d);
+  } catch {
+    return date?.toString() || "N/A";
+  }
 }
 
 /**
@@ -106,4 +126,5 @@ export function debounce<T extends (...args: unknown[]) => unknown>(
     timeout = setTimeout(later, wait);
   };
 }
+
 

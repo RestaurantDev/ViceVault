@@ -161,3 +161,4 @@ export function getFallbackData(symbol: string): PricePoint[] | null {
   return FALLBACK_DATA[symbol] || null;
 }
 
+

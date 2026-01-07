@@ -13,6 +13,29 @@ export interface ParsedTransaction {
 }
 
 /**
+ * Skip patterns - lines matching these are NOT transactions
+ */
+const SKIP_KEYWORDS = [
+  /^balance$/i,
+  /ending bal/i,
+  /beginning bal/i,
+  /^available$/i,
+  /^statement$/i,
+  /page \d/i,
+  /account.*number/i,
+  /^total$/i,
+  /^pending$/i,
+  /as of \d/i,
+  /^summary$/i,
+  /^interest$/i,
+  /fee waived/i,
+  /^direct deposit$/i,
+  /^payroll$/i,
+  /^zelle$/i,
+  /^wire transfer$/i,
+];
+
+/**
  * Chase Bank Format
  * Example: "01/15/2024  STARBUCKS #12345 SEATTLE WA  -$5.75"
  * Example: "01/15/2024  PURCHASE AUTHORIZED ON 01/14 STARBUCKS CARD 1234  $5.75"
@@ -53,58 +76,103 @@ const BOA_PATTERNS = [
 /**
  * Generic Fallback Patterns
  * Catches most common formats across banks
+ * Uses greedy matching for descriptions since they contain spaces
  */
 const GENERIC_PATTERNS = [
-  // Date followed by description followed by amount with dollar sign
-  /(\d{1,2}[-\/]\d{1,2}[-\/]?\d{0,4})\s+(.{3,50}?)\s+\$?([\d,]+\.\d{2})/g,
-  // Tab or multi-space separated
-  /(\d{1,2}[-\/]\d{1,2}(?:[-\/]\d{2,4})?)\t+(.+?)\t+\$?([\d,]+\.\d{2})/g,
+  // INLINE CONCATENATED FORMAT (no line breaks): Date MM/DD/YY followed by text until $amount
+  // Pattern: "10/21/25PURCHASE AUTHORIZED ON 10/21 7-ELEVEN 30126...$46.86"
+  // Matches date, then any text (non-greedy) until we hit $XX.XX
+  /(\d{1,2}\/\d{1,2}\/\d{2})([A-Za-z].+?)\$([\d,]+\.\d{2})/g,
+  
+  // INLINE CONCATENATED FORMAT: Date MM/DD/YYYY followed by text until $amount
+  /(\d{1,2}\/\d{1,2}\/\d{4})([A-Za-z].+?)\$([\d,]+\.\d{2})/g,
+  
+  // SPACED FORMAT: Date (MM/DD/YYYY) followed by description followed by amount at line end
+  /^(\d{1,2}\/\d{1,2}\/\d{4})\s+(.+)\s+\$?([\d,]+\.\d{2})\s*$/gm,
+  
+  // SPACED FORMAT: Date (MM/DD/YY) followed by description followed by amount at line end
+  /^(\d{1,2}\/\d{1,2}\/\d{2})\s+(.+)\s+\$?([\d,]+\.\d{2})\s*$/gm,
+  
+  // SPACED FORMAT: Date (MM-DD-YYYY) followed by description followed by amount at line end
+  /^(\d{1,2}-\d{1,2}-\d{4})\s+(.+)\s+\$?([\d,]+\.\d{2})\s*$/gm,
+  
+  // SPACED FORMAT: Date without year (MM/DD format) at line start
+  /^(\d{1,2}\/\d{1,2})\s+(.+)\s+\$?([\d,]+\.\d{2})\s*$/gm,
+  
+  // Tab-separated format
+  /^(\d{1,2}[-\/]\d{1,2}(?:[-\/]\d{2,4})?)\t+(.+)\t+\$?([\d,]+\.\d{2})\s*$/gm,
+  
   // CSV-like comma separated (from exported statements)
   /(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4}),\s*"?([^",]+)"?,\s*\$?([\d,]+\.\d{2})/g,
 ];
+
+/**
+ * Validate that an ISO date string creates a valid Date object
+ */
+function isValidISODate(isoString: string): boolean {
+  const testDate = new Date(isoString);
+  return !isNaN(testDate.getTime());
+}
 
 /**
  * Normalize various date formats to ISO (YYYY-MM-DD)
  */
 function normalizeDate(dateStr: string): string {
   const currentYear = new Date().getFullYear();
+  const todayFallback = new Date().toISOString().split("T")[0];
   
   // Remove any leading/trailing whitespace
   dateStr = dateStr.trim();
   
+  let isoString: string;
+  
   // Handle MM/DD or M/D format (no year)
   if (/^\d{1,2}\/\d{1,2}$/.test(dateStr)) {
     const [month, day] = dateStr.split("/");
-    return `${currentYear}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+    isoString = `${currentYear}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+    return isValidISODate(isoString) ? isoString : todayFallback;
   }
   
   // Handle MM/DD/YY format
   if (/^\d{1,2}\/\d{1,2}\/\d{2}$/.test(dateStr)) {
     const [month, day, year] = dateStr.split("/");
     const fullYear = parseInt(year) > 50 ? `19${year}` : `20${year}`;
-    return `${fullYear}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+    isoString = `${fullYear}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+    return isValidISODate(isoString) ? isoString : todayFallback;
   }
   
   // Handle MM/DD/YYYY format
   if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(dateStr)) {
     const [month, day, year] = dateStr.split("/");
-    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+    isoString = `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+    return isValidISODate(isoString) ? isoString : todayFallback;
   }
   
   // Handle MM-DD-YYYY format
   if (/^\d{1,2}-\d{1,2}-\d{4}$/.test(dateStr)) {
     const [month, day, year] = dateStr.split("-");
-    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+    isoString = `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+    return isValidISODate(isoString) ? isoString : todayFallback;
   }
   
-  // Fallback: return as-is with current year prefix
-  return `${currentYear}-01-01`;
+  // Handle MM-DD-YY format
+  if (/^\d{1,2}-\d{1,2}-\d{2}$/.test(dateStr)) {
+    const [month, day, year] = dateStr.split("-");
+    const fullYear = parseInt(year) > 50 ? `19${year}` : `20${year}`;
+    isoString = `${fullYear}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+    return isValidISODate(isoString) ? isoString : todayFallback;
+  }
+  
+  // Fallback: return today's date
+  return todayFallback;
 }
 
 /**
  * Clean up description text
  */
-function cleanDescription(desc: string): string {
+function cleanDescription(desc: string | undefined | null): string {
+  if (!desc) return "";
+  
   return desc
     .replace(/\s+/g, " ")           // Normalize whitespace
     .replace(/\s*#\d+\s*/g, " ")    // Remove store numbers
@@ -125,12 +193,45 @@ function parseAmount(amountStr: string): number {
 }
 
 /**
- * Deduplicate transactions by date + description + amount
+ * Create a normalized deduplication key
+ * Uses fuzzy matching to catch similar descriptions from different patterns
+ */
+function createDedupeKey(t: ParsedTransaction): string {
+  if (!t?.description) return `${t?.date || ""}||${t?.amount?.toFixed(2) || "0"}`;
+  
+  // Normalize description: lowercase, remove all non-alphanumeric, take first 20 chars
+  const normalizedDesc = t.description
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "")
+    .slice(0, 20);
+  
+  // Use date + normalized description + amount (rounded to avoid float issues)
+  return `${t.date}|${normalizedDesc}|${t.amount.toFixed(2)}`;
+}
+
+/**
+ * Check if a range overlaps with any existing matched ranges
+ */
+function isOverlapping(
+  matchedRanges: Array<{ start: number; end: number }>,
+  start: number,
+  end: number
+): boolean {
+  return matchedRanges.some(range => {
+    // Check for any overlap
+    return start < range.end && end > range.start;
+  });
+}
+
+/**
+ * Deduplicate transactions using fuzzy matching
  */
 function deduplicateTransactions(transactions: ParsedTransaction[]): ParsedTransaction[] {
   const seen = new Set<string>();
   return transactions.filter((t) => {
-    const key = `${t.date}|${t.description.toLowerCase()}|${t.amount}`;
+    if (!t?.description) return false; // Guard against null/undefined
+    
+    const key = createDedupeKey(t);
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -139,38 +240,68 @@ function deduplicateTransactions(transactions: ParsedTransaction[]): ParsedTrans
 
 /**
  * Main parser function - tries each bank format in order
+ * Uses range-based overlap detection to prevent duplicate matches
  */
 export function parseStatementText(text: string): ParsedTransaction[] {
   const transactions: ParsedTransaction[] = [];
+  const matchedRanges: Array<{ start: number; end: number }> = [];
   
   // Normalize line endings
   const normalizedText = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   
-  // All patterns grouped by bank
-  const allPatterns = [
+  // Process bank-specific patterns first (more accurate), then generic
+  const orderedPatterns = [
     ...CHASE_PATTERNS,
     ...WELLS_FARGO_PATTERNS,
     ...BOA_PATTERNS,
+    // Generic patterns LAST (fallback only)
     ...GENERIC_PATTERNS,
   ];
   
   // Try each pattern
-  for (const pattern of allPatterns) {
+  for (const pattern of orderedPatterns) {
     // Reset regex lastIndex
     pattern.lastIndex = 0;
     
     let match;
     while ((match = pattern.exec(normalizedText)) !== null) {
-      const [rawMatch, dateStr, description, amountStr] = match;
+      const [rawMatch, dateStr, descriptionRaw, amountStr] = match;
+      const matchStart = match.index;
+      const matchEnd = match.index + rawMatch.length;
       
-      // Skip if description is too short or looks like headers
+      // Skip if this text region overlaps with a previous match
+      if (isOverlapping(matchedRanges, matchStart, matchEnd)) {
+        continue;
+      }
+      
+      // Skip lines that match non-transaction patterns
+      if (SKIP_KEYWORDS.some(p => p.test(rawMatch))) {
+        continue;
+      }
+      
+      // Clean and validate description
+      const description = cleanDescription(descriptionRaw);
       if (!description || description.length < 3) continue;
+      
+      // Skip if description looks like headers
       if (/^(date|description|amount|balance|transaction)/i.test(description)) continue;
       
+      // Parse and validate amount
+      const amount = parseAmount(amountStr);
+      if (isNaN(amount) || amount <= 0 || amount > 100000) continue; // Sanity check
+      
+      // Normalize and validate date
+      const normalizedDate = normalizeDate(dateStr);
+      const testDate = new Date(normalizedDate);
+      if (isNaN(testDate.getTime())) continue; // Skip invalid dates
+      
+      // Record this match range to prevent overlapping matches
+      matchedRanges.push({ start: matchStart, end: matchEnd });
+      
       transactions.push({
-        date: normalizeDate(dateStr),
-        description: cleanDescription(description),
-        amount: parseAmount(amountStr),
+        date: normalizedDate,
+        description,
+        amount,
         rawMatch,
       });
     }
@@ -224,7 +355,7 @@ export const VICE_KEYWORDS: Record<string, string[]> = {
   subscriptions: [
     "netflix", "spotify", "hulu", "disney+", "hbo max", "paramount",
     "apple tv", "youtube premium", "amazon prime", "audible", "crunchyroll",
-    "peacock", "espn", "showtime", "discovery+"
+    "peacock", "espn", "showtime", "discovery+", "acorns"
   ],
   delivery: [
     "doordash", "uber eats", "grubhub", "postmates", "instacart",
@@ -246,6 +377,7 @@ export function categorizeTransactions(
   }
   
   return transactions.filter((t) => {
+    if (!t?.description) return false; // Guard against null/undefined
     const descLower = t.description.toLowerCase();
     return keywords.some((kw) => descLower.includes(kw.toLowerCase()));
   });
@@ -263,6 +395,7 @@ export function detectViceCategory(transactions: ParsedTransaction[]): {
   
   for (const [category, keywords] of Object.entries(VICE_KEYWORDS)) {
     const matches = transactions.filter((t) => {
+      if (!t?.description) return false; // Guard against null/undefined
       const descLower = t.description.toLowerCase();
       return keywords.some((kw) => descLower.includes(kw.toLowerCase()));
     });
@@ -284,7 +417,7 @@ export function detectViceCategory(transactions: ParsedTransaction[]): {
  * Calculate summary statistics from transactions
  */
 export function calculateTransactionSummary(transactions: ParsedTransaction[]) {
-  if (transactions.length === 0) {
+  if (!transactions || transactions.length === 0) {
     return {
       count: 0,
       total: 0,
@@ -310,4 +443,3 @@ export function calculateTransactionSummary(transactions: ParsedTransaction[]) {
     },
   };
 }
-
